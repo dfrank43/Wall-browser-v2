@@ -53,7 +53,8 @@ function createWindow(config = DEFAULT) {
   const win = new BrowserWindow({
     width, height, x: Number.isFinite(config.x) ? config.x : undefined,
     y: Number.isFinite(config.y) ? config.y : undefined,
-    frame:false, titleBarStyle:'hidden', backgroundColor:'#111111',
+    frame:false, titleBarStyle:'hidden', roundedCorners:false, hasShadow:false,
+    transparent:false, backgroundColor:'#111111',
     webPreferences: { preload:path.join(__dirname,'preload.js'), contextIsolation:true, nodeIntegration:false }
   });
   const view = new BrowserView({webPreferences:{nodeIntegration:false, contextIsolation:true, sandbox:false, preload:path.join(__dirname,'site-preload.js')}});
@@ -104,7 +105,7 @@ app.whenReady().then(() => {
     save();
     quitting = true;
   });
-  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
+  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
   Menu.setApplicationMenu(menu);
   (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch{createWindow(DEFAULT)}});
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
