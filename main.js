@@ -1,6 +1,7 @@
 const { app, BrowserWindow, BrowserView, ipcMain, Menu, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const {overlaps, moveNoOverlap, placeWithoutOverlap} = require('./collision');
 let storePath;
 let saved = [];
 const instances = new Map();
@@ -46,13 +47,23 @@ function resizeContent(entry) {
   const [w,h] = entry.win.getContentSize();
   if (!entry.win.isDestroyed() && !entry.view.webContents.isDestroyed()) entry.view.setBounds({ x:0, y:0, width:w, height:h });
 }
+function obstaclesFor(entry) {
+  return [...instances.values()].filter(other => other !== entry && !other.win.isDestroyed()).map(other => other.win.getBounds());
+}
+function safeBounds(entry, bounds) {
+  const others = obstaclesFor(entry);
+  return placeWithoutOverlap(bounds, others, screen.getAllDisplays());
+}
 function createWindow(config = DEFAULT) {
   const ratio = parseRatio(config.ratio || '16:9');
   const width = Math.max(200, Math.min(5000, Math.round(Number(config.width) || 900)));
   const height = Math.round(width / ratio);
+  const desired = {x:Number.isFinite(config.x)?config.x:100,y:Number.isFinite(config.y)?config.y:100,width,height};
+  const others = [...instances.values()].filter(e=>!e.win.isDestroyed()).map(e=>e.win.getBounds());
+  const placement = placeWithoutOverlap(desired, others, screen.getAllDisplays());
+  if (!placement) { console.error('No free desktop area for another window'); return null; }
   const win = new BrowserWindow({
-    width, height, x: Number.isFinite(config.x) ? config.x : undefined,
-    y: Number.isFinite(config.y) ? config.y : undefined,
+    width, height, x: placement.x, y: placement.y,
     frame:false, titleBarStyle:'hidden', roundedCorners:false, hasShadow:false,
     transparent:false, backgroundColor:'#111111',
     webPreferences: { preload:path.join(__dirname,'preload.js'), contextIsolation:true, nodeIntegration:false }
@@ -107,7 +118,7 @@ app.whenReady().then(() => {
   });
   const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
   Menu.setApplicationMenu(menu);
-  (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch{createWindow(DEFAULT)}});
+  (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch(err){console.error('Unable to restore window:',err.message)}});
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
 });
 ipcMain.handle('get-settings', e => instances.get(e.sender.id)?.config);
@@ -118,8 +129,11 @@ ipcMain.handle('save-settings', async (e, config) => {
   const width = Math.round(Number(config.width));
   if (!Number.isFinite(width) || width < 200 || width > 5000) throw new Error('Width must be 200–5000 pixels');
   const url = normalizeUrl(config.url);
+  const proposed = {...entry.win.getBounds(), width, height:Math.round(width/ratio)};
+  const target = safeBounds(entry, proposed);
+  if (!target) throw new Error('Not enough free desktop space for this size. Reduce the width or move another window.');
   entry.config = {url,ratio:config.ratio,width};
-  entry.win.setContentSize(width,Math.round(width/ratio));
+  entry.win.setBounds(target);
   await entry.view.webContents.loadURL(url);
   showSite(entry);
   save();
@@ -132,7 +146,9 @@ ipcMain.on('wall-pointer', (event, action) => {
   if (!entry || entry.win.isDestroyed()) return;
   const key = entry.id;
   const point = screen.getCursorScreenPoint();
-  if (action === 'down') {
+  const kind = typeof action === 'string' ? action : action?.kind;
+  const override = typeof action === 'object' && action?.override === true;
+  if (kind === 'down') {
     dragStates.set(key, { start: point, bounds: entry.win.getBounds(), moved: false });
     return;
   }
@@ -140,9 +156,12 @@ ipcMain.on('wall-pointer', (event, action) => {
   if (!drag) return;
   const dx = point.x - drag.start.x, dy = point.y - drag.start.y;
   if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
-  if (action === 'move' && drag.moved) {
-    entry.win.setPosition(drag.bounds.x + dx, drag.bounds.y + dy);
-  } else if (action === 'up') {
+  if (kind === 'move' && drag.moved) {
+    const current=entry.win.getBounds();
+    const desired={...current,x:drag.bounds.x+dx,y:drag.bounds.y+dy};
+    const next=override ? desired : moveNoOverlap(current,desired,obstaclesFor(entry));
+    if(next.x!==current.x||next.y!==current.y)entry.win.setPosition(Math.round(next.x),Math.round(next.y));
+  } else if (kind === 'up') {
     dragStates.delete(key);
     if (!drag.moved) showSettings(entry);
     else save();

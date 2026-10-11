@@ -1,15 +1,23 @@
-# Frameless Browser — Intel Mac standalone build
+# Frameless Browser 1.2.0 — Video Wall
 
-Designed for the Intel-based 2019 16-inch MacBook Pro. Frameless Chromium windows, no tabs. Command-click a page to edit its URL, aspect ratio, and width. Command-N opens a new window; Command-comma opens settings. Window configurations persist between launches.
+Full source for Intel macOS Electron build. Upload these files at the root of your GitHub repository, retaining `.github/workflows/build-mac.yml`, or keep your existing working workflow.
 
-## Build without installing developer tools on your Mac
-1. Create a GitHub repository and upload **the contents** of this folder, including the hidden `.github/workflows/build-mac.yml` file. You can upload the ZIP contents using GitHub's **Add file → Upload files** interface; ensure the workflow path is preserved.
-2. Open the repository's **Actions** tab and choose **Build Intel Mac App** → **Run workflow**.
-3. When the build completes, open the run, download the **Frameless-Browser-Intel-Mac** artifact, unzip it, and open the `.dmg` to drag the app to Applications (or extract the `.app` from the distribution ZIP).
-4. The app is unsigned/not notarized. macOS may block the first launch; in System Settings → Privacy & Security choose **Open Anyway** for this app if you trust your own build.
+## Controls
+- Command-click: settings for this window
+- Command-drag: move window; it stops against other windows and snaps to nearby edges (10 px)
+- Command-Option-drag: temporarily allow overlap while dragging
+- Command-Shift-S: open settings
+- Command-N: new window
+- Command-W: close window
+- Command-Q: quit and save layout
+- Command-V/C/X/A/Z: standard editing in settings
 
-## Local build (optional)
-Install Node.js 22+, then run `npm install` and `npm run dist`. Intel `.dmg` and `.zip` outputs appear in `dist/`.
+Changing a window's width or aspect ratio tries to relocate it if needed to prevent overlap. If no space fits on a connected display, the change is rejected with an error.
 
-## Notes
-The built `.app` is standalone: no Node.js, Electron, or Chrome installation is needed to run it. Electron bundles a Chromium version, which may lag Chrome stable. This is a prototype and not a security-hardened browser for untrusted sites. Some DRM video services and Chrome extensions may not work. Command-click interception may not work on every site or embedded frame. No standard title bar means window movement is limited.
+On launch, saved windows that overlap are relocated where possible. When there is insufficient free display area, additional windows cannot open. The app cannot prevent overlap with *other applications*, only its own windows. A Command-Option-drag override may deliberately create overlap; normal dragging then avoids introducing new overlaps but cannot automatically untangle already-overlapping windows.
+
+## Build
+Use the included GitHub Actions workflow to create unsigned x64 macOS DMG/ZIP artifacts, or `npm install` followed by `npm run dist` on a Mac.
+
+## Verification
+JavaScript syntax and collision logic tested locally. Electron UI and macOS behavior still require testing on a Mac.

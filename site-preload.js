@@ -14,7 +14,7 @@ const { ipcRenderer } = require('electron');
     if (!active) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    ipcRenderer.send('wall-pointer', 'move');
+    ipcRenderer.send('wall-pointer', {kind:'move', override:event.altKey});
   }, true);
   window.addEventListener('mouseup', event => {
     if (!active) return;
