@@ -1,0 +1,47 @@
+
+name: Build Frameless Browser - Intel Mac
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Intel Mac Application
+    runs-on: macos-15
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Intel Mac application
+        run: npx electron-builder --mac dmg zip --x64 --publish never
+
+      - name: List generated files
+        run: ls -lah dist/
+
+      - name: Upload Mac application
+        uses: actions/upload-artifact@v5
+        with:
+          name: Frameless-Browser-Intel-Mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
