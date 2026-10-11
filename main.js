@@ -42,6 +42,7 @@ function scheduleSave() {
   saveTimer = setTimeout(() => { saveTimer = null; save(); }, 200);
 }
 function resizeContent(entry) {
+  if (entry.win.isDestroyed() || entry.view.webContents.isDestroyed()) return;
   const [w,h] = entry.win.getContentSize();
   if (!entry.win.isDestroyed() && !entry.view.webContents.isDestroyed()) entry.view.setBounds({ x:0, y:0, width:w, height:h });
 }
@@ -70,6 +71,12 @@ function createWindow(config = DEFAULT) {
     dragStates.delete(windowId);
     if (!quitting) scheduleSave();
   });
+  view.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.meta && input.shift && input.key.toLowerCase() === 's') {
+      event.preventDefault();
+      showSettings(entry);
+    }
+  });
   view.webContents.setWindowOpenHandler(({url}) => {
     if (/^https?:\/\//i.test(url)) createWindow({...DEFAULT,url});
     return {action:'deny'};
@@ -80,10 +87,11 @@ function createWindow(config = DEFAULT) {
 }
 function showSettings(entry) {
   if (entry.win.isDestroyed()) return;
-  entry.win.setBrowserView(null);
+  if (!entry.view.webContents.isDestroyed()) entry.win.setBrowserView(null);
   entry.win.loadFile(path.join(__dirname,'shell.html'));
 }
 function showSite(entry) {
+  if (entry.win.isDestroyed() || entry.view.webContents.isDestroyed()) return;
   entry.win.loadURL('about:blank').catch(err => console.error('Could not show site:', err));
   entry.win.setBrowserView(entry.view);
   resizeContent(entry);
@@ -96,7 +104,7 @@ app.whenReady().then(() => {
     save();
     quitting = true;
   });
-  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+,',click:(_,w)=>{const e=w&&instances.get(w.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
+  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
   Menu.setApplicationMenu(menu);
   (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch{createWindow(DEFAULT)}});
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
