@@ -108,6 +108,10 @@ function showSite(entry) {
   entry.win.setBrowserView(entry.view);
   resizeContent(entry);
 }
+app.commandLine.appendSwitch(
+    'autoplay-policy',
+    'no-user-gesture-required'
+);
 app.whenReady().then(() => {
   storePath = path.join(app.getPath('userData'),'windows.json');
   try { saved = JSON.parse(fs.readFileSync(storePath,'utf8')); if (!Array.isArray(saved)) saved=[]; } catch { saved=[]; }
