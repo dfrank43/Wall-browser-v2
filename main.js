@@ -136,9 +136,15 @@ ipcMain.handle('save-settings', async (e, config) => {
   if (!target) throw new Error('Not enough free desktop space for this size. Reduce the width or move another window.');
   entry.config = {url,ratio:config.ratio,width};
   entry.win.setBounds(target);
-  await entry.view.webContents.loadURL(url);
+  // Attach the website view before navigation. Direct media URLs may
+  // interrupt navigation and reject loadURL even when the player renders.
   showSite(entry);
   save();
+  entry.view.webContents.loadURL(url).catch(err => {
+    if (!entry.win.isDestroyed()) {
+      console.error(`Navigation failed for ${url}:`, err);
+    }
+  });
   return true;
 });
 ipcMain.handle('cancel-settings', e => {const entry=instances.get(e.sender.id);if(entry)showSite(entry)});
