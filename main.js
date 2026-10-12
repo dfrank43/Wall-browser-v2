@@ -2,6 +2,8 @@ const { app, BrowserWindow, BrowserView, ipcMain, Menu, screen } = require('elec
 const fs = require('fs');
 const path = require('path');
 const {overlaps, moveNoOverlap, placeWithoutOverlap} = require('./collision');
+// Allow synchronized HTML5 video/audio to start without a user gesture.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 let storePath;
 let saved = [];
 const instances = new Map();
@@ -9,7 +11,7 @@ let quitting = false;
 let saveTimer = null;
 let lastLayout = [];
 const dragStates = new Map();
-const DEFAULT = { url: 'https://example.com', width: 900, ratio: '16:9' };
+const DEFAULT = { url: 'https://example.com', width: 900, ratio: '16:9', muted: false };
 function parseRatio(r) {
   const m = String(r).match(/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/);
   if (!m || +m[1] <= 0 || +m[2] <= 0) throw new Error('Ratio must be like 16:9 or 4:3');
@@ -72,7 +74,8 @@ function createWindow(config = DEFAULT) {
   });
   const view = new BrowserView({webPreferences:{nodeIntegration:false, contextIsolation:true, sandbox:false, preload:path.join(__dirname,'site-preload.js')}});
   win.setBrowserView(view);
-  const entry = {win, view, config:{url:normalizeUrl(config.url || DEFAULT.url),width,ratio:config.ratio || '16:9'}};
+  const entry = {win, view, config:{url:normalizeUrl(config.url || DEFAULT.url),width,ratio:config.ratio || '16:9',muted:config.muted === true}};
+  view.webContents.setAudioMuted(entry.config.muted);
   const windowId = win.webContents.id;
   entry.id = windowId;
   instances.set(windowId, entry);
@@ -86,6 +89,11 @@ function createWindow(config = DEFAULT) {
     if (!quitting) scheduleSave();
   });
   view.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.meta && input.shift && input.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      toggleDebug(entry);
+      return;
+    }
     if (input.type === 'keyDown' && input.meta && input.shift && input.key.toLowerCase() === 's') {
       event.preventDefault();
       showSettings(entry);
@@ -98,6 +106,26 @@ function createWindow(config = DEFAULT) {
   view.webContents.loadURL(entry.config.url).catch(err => console.error('Site load failed:', err.message));
   save();
   return entry;
+}
+// Toggle Chromium Developer Tools for the active video-wall window.
+// Detached DevTools do not change the frameless window's dimensions.
+function toggleDebug(entry) {
+  if (!entry || entry.win.isDestroyed()) return;
+  const contents = entry.win.getBrowserView() === entry.view
+    ? entry.view.webContents
+    : entry.win.webContents;
+  if (contents.isDestroyed()) return;
+  if (contents.isDevToolsOpened()) {
+    contents.closeDevTools();
+  } else {
+    contents.openDevTools({mode: 'detach', activate: true});
+  }
+}
+function activeEntry(browserWindow) {
+  const target = browserWindow && !browserWindow.isDestroyed()
+    ? browserWindow : BrowserWindow.getFocusedWindow();
+  return target && !target.isDestroyed()
+    ? instances.get(target.webContents.id) : null;
 }
 function showSettings(entry) {
   if (entry.win.isDestroyed()) return;
@@ -118,7 +146,7 @@ app.whenReady().then(() => {
     save();
     quitting = true;
   });
-  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{role:'reload'}]}]);
+  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{label:'Mute/Unmute Active Window',accelerator:'CommandOrControl+Shift+M',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e && !e.view.webContents.isDestroyed()){e.config.muted=!e.config.muted;e.view.webContents.setAudioMuted(e.config.muted);scheduleSave();}}},{label:'Toggle Debug / Developer Tools',accelerator:'CommandOrControl+Shift+D',click:(_,w)=>toggleDebug(activeEntry(w))},{role:'reload'}]}]);
   Menu.setApplicationMenu(menu);
   (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch(err){console.error('Unable to restore window:',err.message)}});
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
@@ -134,7 +162,8 @@ ipcMain.handle('save-settings', async (e, config) => {
   const proposed = {...entry.win.getBounds(), width, height:Math.round(width/ratio)};
   const target = safeBounds(entry, proposed);
   if (!target) throw new Error('Not enough free desktop space for this size. Reduce the width or move another window.');
-  entry.config = {url,ratio:config.ratio,width};
+  entry.config = {url,ratio:config.ratio,width,muted:config.muted === true};
+  entry.view.webContents.setAudioMuted(entry.config.muted);
   entry.win.setBounds(target);
   // Attach the website view before navigation. Direct media URLs may
   // interrupt navigation and reject loadURL even when the player renders.

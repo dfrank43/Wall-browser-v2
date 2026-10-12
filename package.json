@@ -1,6 +1,6 @@
 {
   "name": "frameless-browser",
-  "version": "1.2.0",
+  "version": "1.2.3",
   "private": true,
   "description": "Frameless multi-window Chromium browser for macOS",
   "main": "main.js",
