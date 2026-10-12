@@ -18,7 +18,9 @@ function parseRatio(r) {
 function normalizeUrl(raw) {
   const input = String(raw || '').trim();
   if (!input) throw new Error('URL is required');
-  const url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+  const hasScheme = /^https?:\/\//i.test(input);
+  const isLocal = /^(?:localhost|127\.0\.0\.1|\[::1\]|[a-z0-9-]+\.local)(?::\d+)?(?:[/?#]|$)/i.test(input);
+  const url = new URL(hasScheme ? input : `${isLocal ? 'http' : 'https'}://${input}`);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only http and https URLs are supported');
   return url.href;
 }
@@ -108,10 +110,6 @@ function showSite(entry) {
   entry.win.setBrowserView(entry.view);
   resizeContent(entry);
 }
-app.commandLine.appendSwitch(
-    'autoplay-policy',
-    'no-user-gesture-required'
-);
 app.whenReady().then(() => {
   storePath = path.join(app.getPath('userData'),'windows.json');
   try { saved = JSON.parse(fs.readFileSync(storePath,'utf8')); if (!Array.isArray(saved)) saved=[]; } catch { saved=[]; }
