@@ -1,0 +1,67 @@
+
+name: Build Frameless Browser - All Platforms
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Mac Intel
+            os: macos-15
+            platform: mac
+            arch: x64
+            artifact: Frameless-Browser-Mac-Intel
+
+          - name: Mac Apple Silicon
+            os: macos-15
+            platform: mac
+            arch: arm64
+            artifact: Frameless-Browser-Mac-Apple-Silicon
+
+          - name: Windows x64
+            os: windows-2025
+            platform: win
+            arch: x64
+            artifact: Frameless-Browser-Windows-x64
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build application
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+
+      - name: Upload application
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
