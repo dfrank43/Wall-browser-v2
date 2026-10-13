@@ -1,12 +1,12 @@
 {
   "name": "frameless-browser",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "private": true,
-  "description": "Frameless multi-window Chromium browser for macOS",
+  "description": "Cross-platform frameless Chromium video-wall browser for macOS and Windows",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --mac --x64"
+    "dist": "electron-builder --publish never"
   },
   "devDependencies": {
     "electron": "latest",
@@ -28,7 +28,29 @@
       "preload.js",
       "shell.html",
       "site-preload.js",
-      "package.json"
-    ]
+      "package.json",
+      "presets.html",
+      "presets-preload.js"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

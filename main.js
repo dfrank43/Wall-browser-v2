@@ -5,12 +5,17 @@ const {overlaps, moveNoOverlap, placeWithoutOverlap} = require('./collision');
 // Allow synchronized HTML5 video/audio to start without a user gesture.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 let storePath;
+let presetPath;
+let presets = {};
+let presetManager = null;
+let suppressLayoutSave = false;
 let saved = [];
 const instances = new Map();
 let quitting = false;
 let saveTimer = null;
 let lastLayout = [];
 const dragStates = new Map();
+const IS_MAC = process.platform === 'darwin';
 const DEFAULT = { url: 'https://example.com', width: 900, ratio: '16:9', muted: false };
 function parseRatio(r) {
   const m = String(r).match(/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/);
@@ -36,13 +41,13 @@ function snapshot() {
   }).filter(Boolean);
 }
 function save() {
-  if (quitting || !storePath) return;
+  if (quitting || suppressLayoutSave || !storePath) return;
   lastLayout = snapshot();
   try { fs.writeFileSync(storePath, JSON.stringify(lastLayout, null, 2)); }
   catch (err) { console.error('Could not save window layout:', err); }
 }
 function scheduleSave() {
-  if (quitting) return;
+  if (quitting || suppressLayoutSave) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = null; save(); }, 200);
 }
@@ -89,12 +94,12 @@ function createWindow(config = DEFAULT) {
     if (!quitting) scheduleSave();
   });
   view.webContents.on('before-input-event', (event, input) => {
-    if (input.type === 'keyDown' && input.meta && input.shift && input.key.toLowerCase() === 'd') {
+    if (input.type === 'keyDown' && (IS_MAC ? input.meta : input.control) && input.shift && input.key.toLowerCase() === 'd') {
       event.preventDefault();
       toggleDebug(entry);
       return;
     }
-    if (input.type === 'keyDown' && input.meta && input.shift && input.key.toLowerCase() === 's') {
+    if (input.type === 'keyDown' && (IS_MAC ? input.meta : input.control) && input.shift && input.key.toLowerCase() === 's') {
       event.preventDefault();
       showSettings(entry);
     }
@@ -138,18 +143,87 @@ function showSite(entry) {
   entry.win.setBrowserView(entry.view);
   resizeContent(entry);
 }
+
+function writePresets() {
+  const tmp = presetPath + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(presets, null, 2));
+  fs.renameSync(tmp, presetPath);
+}
+function validPresetName(name) {
+  const n = String(name || '').trim();
+  if (!n || n.length > 80 || /[\x00-\x1f]/.test(n)) throw new Error('Enter a preset name (1–80 characters).');
+  return n;
+}
+function presetNames() { return Object.keys(presets).sort((a,b)=>a.localeCompare(b)); }
+function notifyPresetManager() {
+  if (presetManager && !presetManager.isDestroyed()) presetManager.webContents.send('presets-changed');
+}
+function savePreset(name, overwrite = false) {
+  name = validPresetName(name);
+  if (Object.prototype.hasOwnProperty.call(presets,name) && !overwrite) throw new Error('Preset already exists. Choose Replace to overwrite it.');
+  const windows = snapshot();
+  if (!windows.length) throw new Error('There are no windows to save.');
+  presets[name] = {windows, savedAt: new Date().toISOString()};
+  writePresets();
+  notifyPresetManager();
+  return {name, count:windows.length};
+}
+function clearWindows() {
+  // Do not let closed-event handlers overwrite the saved layout mid-transition.
+  suppressLayoutSave = true;
+  if (saveTimer) {clearTimeout(saveTimer); saveTimer=null;}
+  for (const entry of [...instances.values()]) {
+    if (!entry.win.isDestroyed()) entry.win.destroy();
+  }
+  instances.clear();
+  dragStates.clear();
+  suppressLayoutSave = false;
+  save();
+  notifyPresetManager();
+  return true;
+}
+function loadPreset(name) {
+  if (!Object.prototype.hasOwnProperty.call(presets,name)) throw new Error('Preset not found.');
+  const windows = presets[name].windows;
+  if (!Array.isArray(windows)) throw new Error('Preset has invalid window data.');
+  // Validate everything before clearing the current layout.
+  const validated = windows.map(c => ({
+    url:normalizeUrl(c.url), ratio:String(c.ratio),
+    width:Number(c.width), muted:c.muted === true,
+    x:Number(c.x), y:Number(c.y)
+  }));
+  validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<200||c.width>5000) throw new Error('Invalid preset width.');});
+  clearWindows();
+  suppressLayoutSave = true;
+  let opened = 0;
+  try {
+    for (const c of validated) if (createWindow(c)) opened++;
+  } finally { suppressLayoutSave = false; save(); notifyPresetManager(); }
+  return {opened, requested:validated.length};
+}
+function openPresetManager() {
+  if (presetManager && !presetManager.isDestroyed()) {presetManager.focus();return;}
+  presetManager = new BrowserWindow({width:510,height:540,title:'Window Presets',backgroundColor:'#17191e',
+    webPreferences:{preload:path.join(__dirname,'presets-preload.js'),contextIsolation:true,nodeIntegration:false}});
+  presetManager.on('closed',()=>{presetManager=null;});
+  presetManager.loadFile(path.join(__dirname,'presets.html'));
+}
+
 app.whenReady().then(() => {
   storePath = path.join(app.getPath('userData'),'windows.json');
+  presetPath = path.join(app.getPath('userData'),'presets.json');
+  try { const value=JSON.parse(fs.readFileSync(presetPath,'utf8')); presets=value && typeof value==='object' && !Array.isArray(value) ? value : {}; } catch {presets={};}
   try { saved = JSON.parse(fs.readFileSync(storePath,'utf8')); if (!Array.isArray(saved)) saved=[]; } catch { saved=[]; }
   app.on('before-quit', () => {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     save();
     quitting = true;
   });
-  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{role:'close'},{role:'quit'}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{label:'Mute/Unmute Active Window',accelerator:'CommandOrControl+Shift+M',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e && !e.view.webContents.isDestroyed()){e.config.muted=!e.config.muted;e.view.webContents.setAudioMuted(e.config.muted);scheduleSave();}}},{label:'Toggle Debug / Developer Tools',accelerator:'CommandOrControl+Shift+D',click:(_,w)=>toggleDebug(activeEntry(w))},{role:'reload'}]}]);
+  const menu = Menu.buildFromTemplate([{label:'File',submenu:[{label:'New Window',accelerator:'CommandOrControl+N',click:()=>createWindow()},{type:'separator'},{label:'Window Presets…',accelerator:'CommandOrControl+Shift+P',click:openPresetManager},{type:'separator'},{role:'close'},{label:'Quit',accelerator:'CommandOrControl+Q',click:()=>app.quit()}]},{label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'pasteAndMatchStyle'},{role:'delete'},{role:'selectAll'}]},{label:'View',submenu:[{label:'Window Settings',accelerator:'CommandOrControl+Shift+S',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e)showSettings(e);}},{label:'Mute/Unmute Active Window',accelerator:'CommandOrControl+Shift+M',click:(_,w)=>{const target=w || BrowserWindow.getFocusedWindow();const e=target && !target.isDestroyed() && instances.get(target.webContents.id);if(e && !e.view.webContents.isDestroyed()){e.config.muted=!e.config.muted;e.view.webContents.setAudioMuted(e.config.muted);scheduleSave();}}},{label:'Toggle Debug / Developer Tools',accelerator:'CommandOrControl+Shift+D',click:(_,w)=>toggleDebug(activeEntry(w))},{role:'reload'}]}]);
   Menu.setApplicationMenu(menu);
   (saved.length ? saved : [DEFAULT]).forEach(c => {try{createWindow(c)}catch(err){console.error('Unable to restore window:',err.message)}});
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
+  app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 });
 ipcMain.handle('get-settings', e => instances.get(e.sender.id)?.config);
 ipcMain.handle('save-settings', async (e, config) => {
@@ -203,4 +277,22 @@ ipcMain.on('wall-pointer', (event, action) => {
     if (!drag.moved) showSettings(entry);
     else save();
   }
+});
+
+// Preset management is restricted to the dedicated local preset manager window.
+function presetSender(event) {
+  if (!presetManager || presetManager.isDestroyed() || event.sender !== presetManager.webContents)
+    throw new Error('Unauthorized preset request');
+}
+ipcMain.handle('presets-list', event => {
+  presetSender(event);
+  return {names:presetNames().map(name=>({name,count:Array.isArray(presets[name]?.windows)?presets[name].windows.length:0,savedAt:presets[name]?.savedAt})),openCount:snapshot().length};
+});
+ipcMain.handle('presets-save', (event,name,overwrite) => {presetSender(event);return savePreset(name,overwrite === true);});
+ipcMain.handle('presets-load', (event,name) => {presetSender(event);return loadPreset(name);});
+ipcMain.handle('presets-clear', event => {presetSender(event);return clearWindows();});
+ipcMain.handle('presets-delete', (event,name) => {
+  presetSender(event);
+  if (!Object.prototype.hasOwnProperty.call(presets,name)) throw new Error('Preset not found.');
+  delete presets[name]; writePresets(); notifyPresetManager(); return true;
 });

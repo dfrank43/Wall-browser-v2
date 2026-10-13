@@ -1,10 +1,11 @@
 const { ipcRenderer } = require('electron');
-// Command-click opens settings; Command-drag moves the containing window.
+// Command-click/drag on macOS; Ctrl-click/drag on Windows.
 // Coordinates are obtained by the main process, never trusted from page scripts.
 { 
+  const modifierPressed = event => process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
   let active = false;
   window.addEventListener('mousedown', event => {
-    if (!event.metaKey || event.button !== 0) return;
+    if (!modifierPressed(event) || event.button !== 0) return;
     active = true;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -24,7 +25,7 @@ const { ipcRenderer } = require('electron');
     ipcRenderer.send('wall-pointer', 'up');
   }, true);
   window.addEventListener('click', event => {
-    if (event.metaKey) { event.preventDefault(); event.stopImmediatePropagation(); }
+    if (modifierPressed(event)) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   window.addEventListener('blur', () => { if (active) { active = false; ipcRenderer.send('wall-pointer', 'up'); } });
 }

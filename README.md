@@ -1,32 +1,30 @@
-# Frameless Browser 1.2.0 — Video Wall
+# Frameless Browser v1.3.0
 
-Full source for Intel macOS Electron build. Upload these files at the root of your GitHub repository, retaining `.github/workflows/build-mac.yml`, or keep your existing working workflow.
+Standalone multi-window Chromium video-wall browser for Intel Mac, Apple Silicon Mac and Windows x64.
+
+## Build with GitHub Actions
+
+Upload all files, including `.github/workflows/build-all.yml`, to the repository root. Remove older workflow files to avoid duplicate builds. In Actions, run **Build Frameless Browser - Mac and Windows**. Three separate downloadable artifacts will be produced if each job succeeds:
+
+- Frameless-Browser-Mac-Intel: DMG + ZIP
+- Frameless-Browser-Mac-Apple-Silicon: DMG + ZIP
+- Frameless-Browser-Windows-x64: NSIS installer + portable EXE
+
+Builds are unsigned; macOS Gatekeeper and Windows SmartScreen may warn. Review the source and only approve builds you trust.
 
 ## Controls
-- Command-click: settings for this window
-- Command-drag: move window; it stops against other windows and snaps to nearby edges (10 px)
-- Command-Option-drag: temporarily allow overlap while dragging
-- Command-Shift-S: open settings
-- Command-N: new window
-- Command-W: close window
-- Command-Q: quit and save layout
-- Command-V/C/X/A/Z: standard editing in settings
 
-Changing a window's width or aspect ratio tries to relocate it if needed to prevent overlap. If no space fits on a connected display, the change is rejected with an error.
+| Action | macOS | Windows |
+|---|---|---|
+| New window | Cmd+N | Ctrl+N |
+| Settings | Cmd+Shift+S or Cmd-click | Ctrl+Shift+S or Ctrl-click |
+| Move window | Cmd-drag | Ctrl-drag |
+| Debug DevTools | Cmd+Shift+D | Ctrl+Shift+D |
+| Mute/unmute | Cmd+Shift+M | Ctrl+Shift+M |
+| Window presets | Cmd+Shift+P | Ctrl+Shift+P |
 
-On launch, saved windows that overlap are relocated where possible. When there is insufficient free display area, additional windows cannot open. The app cannot prevent overlap with *other applications*, only its own windows. A Command-Option-drag override may deliberately create overlap; normal dragging then avoids introducing new overlaps but cannot automatically untangle already-overlapping windows.
+The browser saves layouts and named presets in Electron's per-user application data directory. Window locations and collision handling depend on each OS display configuration. The native mouse modifier and frameless window behavior on Windows still require runtime testing.
 
-## Build
-Use the included GitHub Actions workflow to create unsigned x64 macOS DMG/ZIP artifacts, or `npm install` followed by `npm run dist` on a Mac.
+## Development
 
-## Verification
-JavaScript syntax and collision logic tested locally. Electron UI and macOS behavior still require testing on a Mac.
-
-## v1.2.2 Audio
-- Chromium autoplay without user gesture enabled for synchronized video walls.
-- Per-window **Mute audio in this window** checkbox in Command-Shift-S settings.
-- Command-Shift-M toggles mute for the active window.
-- Mute setting is persisted with the window layout.
-- Default audio is unmuted; mute all but one window to avoid duplicate sound.
-- Uses the HTTP/media navigation handling from v1.2.1.
-\n## v1.2.3 Debug toggle\nCommand-Shift-D toggles detached Chromium Developer Tools for the active window (site or settings). No change to window dimensions.\n
+Run `npm install` and `npm start` locally to test. `npm run dist` packages for the current OS with electron-builder defaults. GitHub Actions performs the explicit architecture builds.
