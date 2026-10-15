@@ -15,6 +15,7 @@ let quitting = false;
 let saveTimer = null;
 let lastLayout = [];
 const dragStates = new Map();
+const settingsPopups = new Map();
 const IS_MAC = process.platform === 'darwin';
 const DEFAULT = { url: 'https://example.com', width: 900, ratio: '16:9', muted: false };
 function parseRatio(r) {
@@ -65,7 +66,7 @@ function safeBounds(entry, bounds) {
 }
 function createWindow(config = DEFAULT) {
   const ratio = parseRatio(config.ratio || '16:9');
-  const width = Math.max(50, Math.min(5000, Math.round(Number(config.width) || 900)));
+  const width = Math.max(20, Math.min(5000, Math.round(Number(config.width) || 900)));
   const height = Math.round(width / ratio);
   const desired = {x:Number.isFinite(config.x)?config.x:100,y:Number.isFinite(config.y)?config.y:100,width,height};
   const others = [...instances.values()].filter(e=>!e.win.isDestroyed()).map(e=>e.win.getBounds());
@@ -77,7 +78,7 @@ function createWindow(config = DEFAULT) {
       : placeWithoutOverlap(desired, others, screen.getAllDisplays());
   if (!placement) { console.error('No free desktop area for another window'); return null; }
   const win = new BrowserWindow({
-    width, height, x: placement.x, y: placement.y,
+    width, height, minWidth:20, minHeight:20, x: placement.x, y: placement.y,
     frame:false, titleBarStyle:'hidden', roundedCorners:false, hasShadow:false,
     transparent:false, backgroundColor:'#111111',
     webPreferences: { preload:path.join(__dirname,'preload.js'), contextIsolation:true, nodeIntegration:false }
@@ -96,6 +97,9 @@ function createWindow(config = DEFAULT) {
   win.on('closed', () => {
     instances.delete(windowId);
     dragStates.delete(windowId);
+    const popup = settingsPopups.get(windowId);
+    settingsPopups.delete(windowId);
+    if (popup && !popup.isDestroyed()) popup.close();
     if (!quitting) scheduleSave();
   });
   view.webContents.on('before-input-event', (event, input) => {
@@ -138,15 +142,39 @@ function activeEntry(browserWindow) {
     ? instances.get(target.webContents.id) : null;
 }
 function showSettings(entry) {
-  if (entry.win.isDestroyed()) return;
-  if (!entry.view.webContents.isDestroyed()) entry.win.setBrowserView(null);
-  entry.win.loadFile(path.join(__dirname,'shell.html'));
+  if (!entry || entry.win.isDestroyed()) return;
+  const existing = settingsPopups.get(entry.id);
+  if (existing && !existing.isDestroyed()) { existing.focus(); return; }
+  const popup = new BrowserWindow({
+    width: 460, height: 480, minWidth: 380, minHeight: 400,
+    title: `Window Settings${entry.config.screenName ? ' — ' + entry.config.screenName : ''}`,
+    parent: entry.win, modal: false, show: false,
+    backgroundColor: '#17191e',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false
+    }
+  });
+  settingsPopups.set(entry.id, popup);
+  popup.on('closed', () => {
+    if (settingsPopups.get(entry.id) === popup) settingsPopups.delete(entry.id);
+  });
+  popup.loadFile(path.join(__dirname, 'shell.html'))
+    .then(() => { if (!popup.isDestroyed()) popup.show(); })
+    .catch(err => { console.error('Settings popup failed:', err); if (!popup.isDestroyed()) popup.close(); });
+}
+function settingsEntry(event) {
+  for (const [id, popup] of settingsPopups) {
+    if (!popup.isDestroyed() && popup.webContents === event.sender) {
+      const entry = instances.get(id);
+      if (entry && !entry.win.isDestroyed()) return {entry, popup};
+    }
+  }
+  throw new Error('Settings window is no longer available');
 }
 function showSite(entry) {
-  if (entry.win.isDestroyed() || entry.view.webContents.isDestroyed()) return;
-  entry.win.loadURL('about:blank').catch(err => console.error('Could not show site:', err));
-  entry.win.setBrowserView(entry.view);
-  resizeContent(entry);
+  // Website remains visible behind the independent settings popup.
+  if (entry && !entry.win.isDestroyed()) resizeContent(entry);
 }
 
 function writePresets() {
@@ -182,6 +210,8 @@ function clearWindows() {
   }
   instances.clear();
   dragStates.clear();
+  for (const popup of settingsPopups.values()) if (!popup.isDestroyed()) popup.close();
+  settingsPopups.clear();
   suppressLayoutSave = false;
   save();
   notifyPresetManager();
@@ -198,7 +228,7 @@ function loadPreset(name) {
     x:Number(c.x), y:Number(c.y),
     preserveImportedPosition: presets[name].imported === true
   }));
-  validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<50||c.width>5000) throw new Error('Invalid preset width.');});
+  validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<20||c.width>5000) throw new Error('Invalid preset width.');});
   clearWindows();
   suppressLayoutSave = true;
   let opened = 0;
@@ -236,7 +266,7 @@ function importWallJSON(data, scalePercent = 100) {
       throw new Error(`Screen ${i+1} has invalid percentage coordinates.`);
     const width = Math.round(wallW*w/100);
     const height = Math.round(wallH*h/100);
-    if (width < 50 || height < 1) throw new Error(`Screen ${i+1} is too small at this scale (minimum 50px wide).`);
+    if (width < 20 || height < 1) throw new Error(`Screen ${i+1} is too small at this scale (minimum 20px wide).`);
     const ratio = `${width}:${height}`;
     return {url:'',width,ratio,muted:i !== 0,
       x:Math.round(area.x+20+wallW*x/100),
@@ -278,13 +308,12 @@ app.whenReady().then(() => {
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow()});
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 });
-ipcMain.handle('get-settings', e => instances.get(e.sender.id)?.config);
+ipcMain.handle('get-settings', e => settingsEntry(e).entry.config);
 ipcMain.handle('save-settings', async (e, config) => {
-  const entry = instances.get(e.sender.id);
-  if (!entry) throw new Error('Window not found');
+  const {entry, popup} = settingsEntry(e);
   const ratio = parseRatio(config.ratio);
   const width = Math.round(Number(config.width));
-  if (!Number.isFinite(width) || width < 50 || width > 5000) throw new Error('Width must be 50–5000 pixels');
+  if (!Number.isFinite(width) || width < 20 || width > 5000) throw new Error('Width must be 20–5000 pixels');
   const url = normalizeUrl(config.url);
   const proposed = {...entry.win.getBounds(), width, height:Math.round(width/ratio)};
   const target = safeBounds(entry, proposed);
@@ -301,9 +330,10 @@ ipcMain.handle('save-settings', async (e, config) => {
       console.error(`Navigation failed for ${url}:`, err);
     }
   });
+  if (!popup.isDestroyed()) popup.close();
   return true;
 });
-ipcMain.handle('cancel-settings', e => {const entry=instances.get(e.sender.id);if(entry)showSite(entry)});
+ipcMain.handle('cancel-settings', e => { const {popup} = settingsEntry(e); if (!popup.isDestroyed()) popup.close(); });
 
 ipcMain.on('wall-pointer', (event, action) => {
   const entry = [...instances.values()].find(item => item.view.webContents === event.sender);

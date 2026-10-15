@@ -1,6 +1,6 @@
 {
   "name": "frameless-browser",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "private": true,
   "description": "Cross-platform frameless Chromium video-wall browser for macOS and Windows",
   "main": "main.js",
