@@ -69,7 +69,12 @@ function createWindow(config = DEFAULT) {
   const height = Math.round(width / ratio);
   const desired = {x:Number.isFinite(config.x)?config.x:100,y:Number.isFinite(config.y)?config.y:100,width,height};
   const others = [...instances.values()].filter(e=>!e.win.isDestroyed()).map(e=>e.win.getBounds());
-  const placement = placeWithoutOverlap(desired, others, screen.getAllDisplays());
+  // Imported wall layouts may intentionally extend beyond the visible desktop.
+  // Keep their exact geometry rather than rejecting all but the first window.
+  const placement = config.preserveImportedPosition &&
+    !others.some(b => overlaps(desired, b))
+      ? desired
+      : placeWithoutOverlap(desired, others, screen.getAllDisplays());
   if (!placement) { console.error('No free desktop area for another window'); return null; }
   const win = new BrowserWindow({
     width, height, x: placement.x, y: placement.y,
@@ -190,7 +195,8 @@ function loadPreset(name) {
   const validated = windows.map(c => ({
     url:normalizeUrl(c.url), ratio:String(c.ratio),
     width:Number(c.width), muted:c.muted === true,
-    x:Number(c.x), y:Number(c.y)
+    x:Number(c.x), y:Number(c.y),
+    preserveImportedPosition: presets[name].imported === true
   }));
   validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<50||c.width>5000) throw new Error('Invalid preset width.');});
   clearWindows();
@@ -229,7 +235,7 @@ function importWallJSON(data, scalePercent = 100) {
     return {url:'',width,ratio,muted:i !== 0,
       x:Math.round(area.x+20+wallW*x/100),
       y:Math.round(area.y+20+wallH*y/100),
-      screenId:String(item.id || `screen${i+1}`),screenName:String(item.name || `Screen ${i+1}`)};
+      screenId:String(item.id || `screen${i+1}`),screenName:String(item.name || `Screen ${i+1}`), preserveImportedPosition:true};
   });
   // Avoid accepting an overlapping source layout: the browser's no-overlap rule remains intact.
   for (let i=0;i<windows.length;i++) for(let j=0;j<i;j++) {
