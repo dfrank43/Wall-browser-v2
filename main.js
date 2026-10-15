@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, screen } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, screen, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const {overlaps, moveNoOverlap, placeWithoutOverlap} = require('./collision');
@@ -24,7 +24,7 @@ function parseRatio(r) {
 }
 function normalizeUrl(raw) {
   const input = String(raw || '').trim();
-  if (!input) throw new Error('URL is required');
+  if (!input) return 'about:blank'; // Imported screens start without an assigned page URL.
   const hasScheme = /^https?:\/\//i.test(input);
   const isLocal = /^(?:localhost|127\.0\.0\.1|\[::1\]|[a-z0-9-]+\.local)(?::\d+)?(?:[/?#]|$)/i.test(input);
   const url = new URL(hasScheme ? input : `${isLocal ? 'http' : 'https'}://${input}`);
@@ -65,7 +65,7 @@ function safeBounds(entry, bounds) {
 }
 function createWindow(config = DEFAULT) {
   const ratio = parseRatio(config.ratio || '16:9');
-  const width = Math.max(200, Math.min(5000, Math.round(Number(config.width) || 900)));
+  const width = Math.max(50, Math.min(5000, Math.round(Number(config.width) || 900)));
   const height = Math.round(width / ratio);
   const desired = {x:Number.isFinite(config.x)?config.x:100,y:Number.isFinite(config.y)?config.y:100,width,height};
   const others = [...instances.values()].filter(e=>!e.win.isDestroyed()).map(e=>e.win.getBounds());
@@ -79,7 +79,7 @@ function createWindow(config = DEFAULT) {
   });
   const view = new BrowserView({webPreferences:{nodeIntegration:false, contextIsolation:true, sandbox:false, preload:path.join(__dirname,'site-preload.js')}});
   win.setBrowserView(view);
-  const entry = {win, view, config:{url:normalizeUrl(config.url || DEFAULT.url),width,ratio:config.ratio || '16:9',muted:config.muted === true}};
+  const entry = {win, view, config:{url:normalizeUrl(config.url === undefined ? DEFAULT.url : config.url),width,ratio:config.ratio || '16:9',muted:config.muted === true}};
   view.webContents.setAudioMuted(entry.config.muted);
   const windowId = win.webContents.id;
   entry.id = windowId;
@@ -192,7 +192,7 @@ function loadPreset(name) {
     width:Number(c.width), muted:c.muted === true,
     x:Number(c.x), y:Number(c.y)
   }));
-  validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<200||c.width>5000) throw new Error('Invalid preset width.');});
+  validated.forEach(c => {parseRatio(c.ratio); if(!Number.isFinite(c.width)||c.width<50||c.width>5000) throw new Error('Invalid preset width.');});
   clearWindows();
   suppressLayoutSave = true;
   let opened = 0;
@@ -200,6 +200,47 @@ function loadPreset(name) {
     for (const c of validated) if (createWindow(c)) opened++;
   } finally { suppressLayoutSave = false; save(); notifyPresetManager(); }
   return {opened, requested:validated.length};
+}
+// Import the Video Wall Sync JSON layout into a named browser-window preset.
+// Percentages describe screen geometry; source URLs are intentionally not used.
+function importWallJSON(data, scalePercent = 100) {
+  const scale = Number(scalePercent);
+  if (!Number.isFinite(scale) || scale < 25 || scale > 200) throw new Error("Layout scale must be between 25% and 200%.");
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Expected a JSON object.');
+  if (!Array.isArray(data.screens) || data.screens.length === 0 || data.screens.length > 40)
+    throw new Error('JSON must have between 1 and 40 screens.');
+  const name = validPresetName(data.name || 'Imported Wall');
+  if (Object.prototype.hasOwnProperty.call(presets, name))
+    throw new Error(`Preset "${name}" already exists. Rename it in the JSON or delete the old preset first.`);
+  const area = screen.getPrimaryDisplay().workArea;
+  // Scale percentage-based geometry into a desktop-sized 16:9 wall canvas.
+  const wallW = Math.min(1200, Math.max(700, area.width - 50)) * scale / 100;
+  const wallH = wallW * 9 / 16;
+  const windows = data.screens.map((item, i) => {
+    if (!item || typeof item !== 'object') throw new Error(`Screen ${i+1} is invalid.`);
+    const [x,y,w,h] = ['x','y','w','h'].map(k => Number(item[k]));
+    if (![x,y,w,h].every(Number.isFinite) || x < 0 || y < 0 || w <= 0 || h <= 0 ||
+        x + w > 100.0001 || y + h > 100.0001)
+      throw new Error(`Screen ${i+1} has invalid percentage coordinates.`);
+    const width = Math.round(wallW*w/100);
+    const height = Math.round(wallH*h/100);
+    if (width < 50 || height < 1) throw new Error(`Screen ${i+1} is too small at this scale (minimum 50px wide).`);
+    const ratio = `${width}:${height}`;
+    return {url:'',width,ratio,muted:i !== 0,
+      x:Math.round(area.x+20+wallW*x/100),
+      y:Math.round(area.y+20+wallH*y/100),
+      screenId:String(item.id || `screen${i+1}`),screenName:String(item.name || `Screen ${i+1}`)};
+  });
+  // Avoid accepting an overlapping source layout: the browser's no-overlap rule remains intact.
+  for (let i=0;i<windows.length;i++) for(let j=0;j<i;j++) {
+    const a=windows[i],b=windows[j];
+    if(overlaps({x:a.x,y:a.y,width:a.width,height:Math.round(a.width/parseRatio(a.ratio))},
+                {x:b.x,y:b.y,width:b.width,height:Math.round(b.width/parseRatio(b.ratio))}))
+      throw new Error(`Screens ${j+1} and ${i+1} overlap. Correct the JSON layout before importing.`);
+  }
+  presets[name]={windows,savedAt:new Date().toISOString(),imported:true,scalePercent:scale};
+  writePresets();notifyPresetManager();
+  return {name,count:windows.length};
 }
 function openPresetManager() {
   if (presetManager && !presetManager.isDestroyed()) {presetManager.focus();return;}
@@ -231,7 +272,7 @@ ipcMain.handle('save-settings', async (e, config) => {
   if (!entry) throw new Error('Window not found');
   const ratio = parseRatio(config.ratio);
   const width = Math.round(Number(config.width));
-  if (!Number.isFinite(width) || width < 200 || width > 5000) throw new Error('Width must be 200–5000 pixels');
+  if (!Number.isFinite(width) || width < 50 || width > 5000) throw new Error('Width must be 50–5000 pixels');
   const url = normalizeUrl(config.url);
   const proposed = {...entry.win.getBounds(), width, height:Math.round(width/ratio)};
   const target = safeBounds(entry, proposed);
@@ -287,6 +328,17 @@ function presetSender(event) {
 ipcMain.handle('presets-list', event => {
   presetSender(event);
   return {names:presetNames().map(name=>({name,count:Array.isArray(presets[name]?.windows)?presets[name].windows.length:0,savedAt:presets[name]?.savedAt})),openCount:snapshot().length};
+});
+ipcMain.handle('presets-import-json', async (event, scalePercent) => {
+  presetSender(event);
+  const choice = await dialog.showOpenDialog(presetManager, {
+    title:'Import Video Wall JSON', properties:['openFile'],
+    filters:[{name:'JSON',extensions:['json']}]
+  });
+  if(choice.canceled || !choice.filePaths.length) return null;
+  const file=choice.filePaths[0];
+  if(fs.statSync(file).size > 1024*1024) throw new Error('JSON file is too large (1 MB maximum).');
+  return importWallJSON(JSON.parse(fs.readFileSync(file,'utf8')), scalePercent);
 });
 ipcMain.handle('presets-save', (event,name,overwrite) => {presetSender(event);return savePreset(name,overwrite === true);});
 ipcMain.handle('presets-load', (event,name) => {presetSender(event);return loadPreset(name);});

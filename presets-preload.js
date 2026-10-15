@@ -1,6 +1,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('wallPresets', {
  list:()=>ipcRenderer.invoke('presets-list'),
+ importJSON:(scale)=>ipcRenderer.invoke('presets-import-json',scale),
  save:(name,overwrite)=>ipcRenderer.invoke('presets-save',name,overwrite),
  load:name=>ipcRenderer.invoke('presets-load',name),
  clear:()=>ipcRenderer.invoke('presets-clear'),

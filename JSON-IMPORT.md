@@ -1,0 +1,1 @@
+JSON Import: Set Layout Scale (%) from 25 to 200 before choosing the JSON file. All x/y positions, window widths/heights, and gaps are scaled uniformly. 100% uses the baseline 16:9 canvas; 50% halves every linear dimension. Each screen becomes a separate blank-URL browser window; assign URL in Window Settings. Presets save the resulting scaled geometry.
