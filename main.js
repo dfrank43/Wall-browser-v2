@@ -24,7 +24,7 @@ function parseRatio(r) {
 }
 function normalizeUrl(raw) {
   const input = String(raw || '').trim();
-  if (!input) return 'about:blank'; // Imported screens start without an assigned page URL.
+  if (!input || input.toLowerCase() === 'about:blank') return 'about:blank'; // Blank imported screens must survive both URL normalization passes.
   const hasScheme = /^https?:\/\//i.test(input);
   const isLocal = /^(?:localhost|127\.0\.0\.1|\[::1\]|[a-z0-9-]+\.local)(?::\d+)?(?:[/?#]|$)/i.test(input);
   const url = new URL(hasScheme ? input : `${isLocal ? 'http' : 'https'}://${input}`);
@@ -203,7 +203,13 @@ function loadPreset(name) {
   suppressLayoutSave = true;
   let opened = 0;
   try {
-    for (const c of validated) if (createWindow(c)) opened++;
+    for (const c of validated) {
+      try {
+        if (createWindow(c)) opened++;
+      } catch (error) {
+        console.error('Could not create imported preset window:', error);
+      }
+    }
   } finally { suppressLayoutSave = false; save(); notifyPresetManager(); }
   return {opened, requested:validated.length};
 }
